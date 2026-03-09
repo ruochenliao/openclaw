@@ -21,7 +21,7 @@ import {
   writeCache,
 } from "./web-shared.js";
 
-const SEARCH_PROVIDERS = ["brave", "perplexity", "grok", "gemini", "kimi"] as const;
+const SEARCH_PROVIDERS = ["brave", "perplexity", "grok", "gemini", "kimi", "baidu"] as const;
 const DEFAULT_SEARCH_COUNT = 5;
 const MAX_SEARCH_COUNT = 10;
 
@@ -265,6 +265,15 @@ type KimiConfig = {
   model?: string;
 };
 
+type BaiduConfig = {
+  apiKey?: string;
+  secretKey?: string;
+};
+
+const BAIDU_TOKEN_ENDPOINT = "https://aip.baidubce.com/oauth/2.0/token";
+const BAIDU_SEARCH_ENDPOINT = "https://aip.baidubce.com/rest/2.0/knowledge/v1/search";
+let baiduAccessTokenCache: { token: string; expiresAt: number } | null = null;
+
 type GrokSearchResponse = {
   output?: Array<{
     type?: string;
@@ -475,6 +484,14 @@ function missingSearchKeyPayload(provider: (typeof SEARCH_PROVIDERS)[number]) {
       docs: "https://docs.openclaw.ai/tools/web",
     };
   }
+  if (provider === "baidu") {
+    return {
+      error: "missing_baidu_api_key",
+      message:
+        "web_search (baidu) needs API credentials. Set BAIDU_API_KEY and BAIDU_SECRET_KEY in the Gateway environment, or configure tools.web.search.baidu.apiKey and tools.web.search.baidu.secretKey.",
+      docs: "https://docs.openclaw.ai/tools/web",
+    };
+  }
   return {
     error: "missing_brave_api_key",
     message: `web_search needs a Brave Search API key. Run \`${formatCliCommand("openclaw configure --section web")}\` to store it, or set BRAVE_API_KEY in the Gateway environment.`,
@@ -502,10 +519,29 @@ function resolveSearchProvider(search?: WebSearchConfig): (typeof SEARCH_PROVIDE
   if (raw === "brave") {
     return "brave";
   }
+  if (raw === "baidu") {
+    return "baidu";
+  }
 
   // Auto-detect provider from available API keys (priority order)
   if (raw === "") {
-    // 1. Perplexity
+    // 1. Baidu (priority for China users)
+    const baiduConfig = resolveBaiduConfig(search);
+    if (resolveBaiduApiKey(baiduConfig) && resolveBaiduSecretKey(baiduConfig)) {
+      logVerbose(
+        'web_search: no provider configured, auto-detected "baidu" from available API keys',
+      );
+      return "baidu";
+    }
+    // 2. Kimi (China-accessible)
+    const kimiConfig = resolveKimiConfig(search);
+    if (resolveKimiApiKey(kimiConfig)) {
+      logVerbose(
+        'web_search: no provider configured, auto-detected "kimi" from available API keys',
+      );
+      return "kimi";
+    }
+    // 3. Perplexity
     const perplexityConfig = resolvePerplexityConfig(search);
     const { apiKey: perplexityKey } = resolvePerplexityApiKey(perplexityConfig);
     if (perplexityKey) {
@@ -514,14 +550,14 @@ function resolveSearchProvider(search?: WebSearchConfig): (typeof SEARCH_PROVIDE
       );
       return "perplexity";
     }
-    // 2. Brave
+    // 4. Brave
     if (resolveSearchApiKey(search)) {
       logVerbose(
         'web_search: no provider configured, auto-detected "brave" from available API keys',
       );
       return "brave";
     }
-    // 3. Gemini
+    // 5. Gemini
     const geminiConfig = resolveGeminiConfig(search);
     if (resolveGeminiApiKey(geminiConfig)) {
       logVerbose(
@@ -529,21 +565,13 @@ function resolveSearchProvider(search?: WebSearchConfig): (typeof SEARCH_PROVIDE
       );
       return "gemini";
     }
-    // 4. Grok
+    // 6. Grok
     const grokConfig = resolveGrokConfig(search);
     if (resolveGrokApiKey(grokConfig)) {
       logVerbose(
         'web_search: no provider configured, auto-detected "grok" from available API keys',
       );
       return "grok";
-    }
-    // 5. Kimi
-    const kimiConfig = resolveKimiConfig(search);
-    if (resolveKimiApiKey(kimiConfig)) {
-      logVerbose(
-        'web_search: no provider configured, auto-detected "kimi" from available API keys',
-      );
-      return "kimi";
     }
   }
 
@@ -646,6 +674,53 @@ function resolveKimiBaseUrl(kimi?: KimiConfig): string {
   const fromConfig =
     kimi && "baseUrl" in kimi && typeof kimi.baseUrl === "string" ? kimi.baseUrl.trim() : "";
   return fromConfig || DEFAULT_KIMI_BASE_URL;
+}
+
+function resolveBaiduConfig(search?: WebSearchConfig): BaiduConfig {
+  if (!search || typeof search !== "object") {
+    return {};
+  }
+  const baidu = "baidu" in search ? search.baidu : undefined;
+  if (!baidu || typeof baidu !== "object") {
+    return {};
+  }
+  return baidu as BaiduConfig;
+}
+
+function resolveBaiduApiKey(baidu?: BaiduConfig): string | undefined {
+  const fromConfig = normalizeApiKey(baidu?.apiKey);
+  if (fromConfig) {
+    return fromConfig;
+  }
+  return normalizeApiKey(process.env.BAIDU_API_KEY) || undefined;
+}
+
+function resolveBaiduSecretKey(baidu?: BaiduConfig): string | undefined {
+  const fromConfig = normalizeApiKey(baidu?.secretKey);
+  if (fromConfig) {
+    return fromConfig;
+  }
+  return normalizeApiKey(process.env.BAIDU_SECRET_KEY) || undefined;
+}
+
+async function resolveBaiduAccessToken(apiKey: string, secretKey: string): Promise<string> {
+  if (baiduAccessTokenCache && Date.now() < baiduAccessTokenCache.expiresAt) {
+    return baiduAccessTokenCache.token;
+  }
+  const url = new URL(BAIDU_TOKEN_ENDPOINT);
+  url.searchParams.set("grant_type", "client_credentials");
+  url.searchParams.set("client_id", apiKey);
+  url.searchParams.set("client_secret", secretKey);
+  const res = await fetch(url.toString(), { method: "POST" });
+  if (!res.ok) {
+    throw new Error(`Baidu OAuth token error (${res.status}): ${res.statusText}`);
+  }
+  const data = (await res.json()) as { access_token: string; expires_in: number };
+  baiduAccessTokenCache = {
+    token: data.access_token,
+    expiresAt: Date.now() + (data.expires_in - 300) * 1000,
+  };
+  return data.access_token;
 }
 
 function resolveGeminiConfig(search?: WebSearchConfig): GeminiConfig {
@@ -1213,6 +1288,73 @@ async function runKimiSearch(params: {
   };
 }
 
+type BaiduSearchResult = {
+  title?: string;
+  url?: string;
+  abstract?: string;
+};
+
+type BaiduSearchResponse = {
+  results?: BaiduSearchResult[];
+  error_code?: number;
+  error_msg?: string;
+};
+
+async function runBaiduSearch(params: {
+  query: string;
+  count: number;
+  apiKey: string;
+  secretKey: string;
+  timeoutSeconds: number;
+}): Promise<
+  Array<{
+    title: string;
+    url: string;
+    description: string;
+    siteName?: string;
+  }>
+> {
+  const accessToken = await resolveBaiduAccessToken(params.apiKey, params.secretKey);
+  const url = new URL(BAIDU_SEARCH_ENDPOINT);
+  url.searchParams.set("access_token", accessToken);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), params.timeoutSeconds * 1000);
+
+  try {
+    const res = await fetch(url.toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: params.query,
+        page_no: 1,
+        page_size: params.count,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`Baidu Search API error (${res.status}): ${detail || res.statusText}`);
+    }
+
+    const data = (await res.json()) as BaiduSearchResponse;
+    if (data.error_code) {
+      throw new Error(`Baidu Search API error (${data.error_code}): ${data.error_msg ?? ""}`);
+    }
+
+    const results = Array.isArray(data.results) ? data.results : [];
+    return results.map((entry) => ({
+      title: entry.title ? wrapWebContent(entry.title, "web_search") : "",
+      url: entry.url ?? "",
+      description: entry.abstract ? wrapWebContent(entry.abstract, "web_search") : "",
+      siteName: entry.url ? resolveSiteName(entry.url) : undefined,
+    }));
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function runWebSearch(params: {
   query: string;
   count: number;
@@ -1235,6 +1377,7 @@ async function runWebSearch(params: {
   geminiModel?: string;
   kimiBaseUrl?: string;
   kimiModel?: string;
+  baiduSecretKey?: string;
 }): Promise<Record<string, unknown>> {
   const providerSpecificKey =
     params.provider === "grok"
@@ -1337,6 +1480,35 @@ async function runWebSearch(params: {
       },
       content: wrapWebContent(content),
       citations,
+    };
+    writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
+    return payload;
+  }
+
+  if (params.provider === "baidu") {
+    if (!params.baiduSecretKey) {
+      throw new Error("Baidu Search requires both BAIDU_API_KEY and BAIDU_SECRET_KEY.");
+    }
+    const results = await runBaiduSearch({
+      query: params.query,
+      count: params.count,
+      apiKey: params.apiKey,
+      secretKey: params.baiduSecretKey,
+      timeoutSeconds: params.timeoutSeconds,
+    });
+
+    const payload = {
+      query: params.query,
+      provider: params.provider,
+      count: results.length,
+      tookMs: Date.now() - start,
+      externalContent: {
+        untrusted: true,
+        source: "web_search",
+        provider: params.provider,
+        wrapped: true,
+      },
+      results,
     };
     writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
     return payload;
@@ -1465,6 +1637,7 @@ export function createWebSearchTool(options?: {
   const grokConfig = resolveGrokConfig(search);
   const geminiConfig = resolveGeminiConfig(search);
   const kimiConfig = resolveKimiConfig(search);
+  const baiduConfig = resolveBaiduConfig(search);
 
   const description =
     provider === "perplexity"
@@ -1475,7 +1648,9 @@ export function createWebSearchTool(options?: {
           ? "Search the web using Kimi by Moonshot. Returns AI-synthesized answers with citations from native $web_search."
           : provider === "gemini"
             ? "Search the web using Gemini with Google Search grounding. Returns AI-synthesized answers with citations from Google Search."
-            : "Search the web using Brave Search API. Supports region-specific and localized search via country and language parameters. Returns titles, URLs, and snippets for fast research.";
+            : provider === "baidu"
+              ? "Search the web using Baidu Search API. Returns structured results (title, URL, snippet) optimized for Chinese-language content."
+              : "Search the web using Brave Search API. Supports region-specific and localized search via country and language parameters. Returns titles, URLs, and snippets for fast research.";
 
   return {
     label: "Web Search",
@@ -1494,7 +1669,9 @@ export function createWebSearchTool(options?: {
               ? resolveKimiApiKey(kimiConfig)
               : provider === "gemini"
                 ? resolveGeminiApiKey(geminiConfig)
-                : resolveSearchApiKey(search);
+                : provider === "baidu"
+                  ? resolveBaiduApiKey(baiduConfig)
+                  : resolveSearchApiKey(search);
 
       if (!apiKey) {
         return jsonResult(missingSearchKeyPayload(provider));
@@ -1660,6 +1837,7 @@ export function createWebSearchTool(options?: {
         geminiModel: resolveGeminiModel(geminiConfig),
         kimiBaseUrl: resolveKimiBaseUrl(kimiConfig),
         kimiModel: resolveKimiModel(kimiConfig),
+        baiduSecretKey: resolveBaiduSecretKey(baiduConfig),
       });
       return jsonResult(result);
     },
@@ -1683,5 +1861,7 @@ export const __testing = {
   resolveKimiModel,
   resolveKimiBaseUrl,
   extractKimiCitations,
+  resolveBaiduApiKey,
+  resolveBaiduSecretKey,
   resolveRedirectUrl: resolveCitationRedirectUrl,
 } as const;

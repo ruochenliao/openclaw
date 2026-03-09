@@ -1,4 +1,5 @@
 import { rmSync } from "node:fs";
+import { createHmac, createHash } from "node:crypto";
 import { completeSimple, type TextContent } from "@mariozechner/pi-ai";
 import { EdgeTTS } from "node-edge-tts";
 import { ensureCustomApiRegistered } from "../agents/custom-api-registry.js";
@@ -696,4 +697,221 @@ export async function edgeTTS(params: {
     timeout: config.timeoutMs ?? timeoutMs,
   });
   await tts.ttsPromise(text, outputPath);
+}
+
+function buildIflytekAuthUrl(apiKey: string, apiSecret: string): string {
+  const host = "tts-api.xfyun.cn";
+  const path = "/v2/tts";
+  const date = new Date().toUTCString();
+  const signatureOrigin = `host: ${host}\ndate: ${date}\nGET ${path} HTTP/1.1`;
+  const signature = createHmac("sha256", apiSecret).update(signatureOrigin).digest("base64");
+  const authorizationOrigin = `api_key="${apiKey}", algorithm="hmac-sha256", headers="host date request-line", signature="${signature}"`;
+  const authorization = Buffer.from(authorizationOrigin).toString("base64");
+  const url = new URL(`wss://${host}${path}`);
+  url.searchParams.set("authorization", authorization);
+  url.searchParams.set("date", date);
+  url.searchParams.set("host", host);
+  return url.toString();
+}
+
+export async function iflytekTTS(params: {
+  text: string;
+  appId: string;
+  apiKey: string;
+  apiSecret: string;
+  voice: string;
+  speed: number;
+  volume: number;
+  pitch: number;
+  timeoutMs: number;
+}): Promise<Buffer> {
+  const { WebSocket } = await import("ws");
+  const wsUrl = buildIflytekAuthUrl(params.apiKey, params.apiSecret);
+
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const timeout = setTimeout(() => {
+      ws.close();
+      reject(new Error("iFlytek TTS timeout"));
+    }, params.timeoutMs);
+
+    const ws = new WebSocket(wsUrl);
+
+    ws.on("open", () => {
+      const frame = {
+        common: { app_id: params.appId },
+        business: {
+          aue: "lame",
+          auf: "audio/L16;rate=16000",
+          vcn: params.voice,
+          speed: params.speed,
+          volume: params.volume,
+          pitch: params.pitch,
+          tte: "UTF8",
+        },
+        data: {
+          status: 2,
+          text: Buffer.from(params.text).toString("base64"),
+        },
+      };
+      ws.send(JSON.stringify(frame));
+    });
+
+    ws.on("message", (data: Buffer | string) => {
+      const msg = JSON.parse(typeof data === "string" ? data : data.toString("utf8")) as {
+        code?: number;
+        message?: string;
+        data?: { audio?: string; status?: number };
+      };
+      if (msg.code !== 0) {
+        clearTimeout(timeout);
+        ws.close();
+        reject(new Error(`iFlytek TTS error (${msg.code}): ${msg.message ?? ""}`));
+        return;
+      }
+      if (msg.data?.audio) {
+        chunks.push(Buffer.from(msg.data.audio, "base64"));
+      }
+      if (msg.data?.status === 2) {
+        clearTimeout(timeout);
+        ws.close();
+        resolve(Buffer.concat(chunks));
+      }
+    });
+
+    ws.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+
+    ws.on("close", () => {
+      clearTimeout(timeout);
+      if (chunks.length > 0) {
+        resolve(Buffer.concat(chunks));
+      }
+    });
+  });
+}
+
+function tc3Hmac(key: Buffer | string, msg: string): Buffer {
+  return createHmac("sha256", key).update(msg).digest();
+}
+
+function buildTencentAuthorization(params: {
+  secretId: string;
+  secretKey: string;
+  service: string;
+  action: string;
+  payload: string;
+  timestamp: number;
+  region: string;
+}): Record<string, string> {
+  const date = new Date(params.timestamp * 1000).toISOString().slice(0, 10);
+  const credentialScope = `${date}/${params.service}/tc3_request`;
+  const payloadHash = createHash("sha256").update(params.payload).digest("hex");
+
+  const canonicalRequest = [
+    "POST",
+    "/",
+    "",
+    "content-type:application/json",
+    `host:${params.service}.tencentcloudapi.com`,
+    "",
+    "content-type;host",
+    payloadHash,
+  ].join("\n");
+
+  const canonicalRequestHash = createHash("sha256")
+    .update(canonicalRequest)
+    .digest("hex");
+
+  const stringToSign = ["TC3-HMAC-SHA256", String(params.timestamp), credentialScope, canonicalRequestHash].join("\n");
+
+  const secretDate = tc3Hmac(`TC3${params.secretKey}`, date);
+  const secretService = tc3Hmac(secretDate, params.service);
+  const secretSigning = tc3Hmac(secretService, "tc3_request");
+  const signature = createHmac("sha256", secretSigning).update(stringToSign).digest("hex");
+
+  const authorization = `TC3-HMAC-SHA256 Credential=${params.secretId}/${credentialScope}, SignedHeaders=content-type;host, Signature=${signature}`;
+
+  return {
+    Authorization: authorization,
+    "Content-Type": "application/json",
+    Host: `${params.service}.tencentcloudapi.com`,
+    "X-TC-Action": params.action,
+    "X-TC-Timestamp": String(params.timestamp),
+    "X-TC-Version": "2019-08-23",
+    "X-TC-Region": params.region,
+  };
+}
+
+export async function tencentTTS(params: {
+  text: string;
+  secretId: string;
+  secretKey: string;
+  voiceType: number;
+  speed: number;
+  volume: number;
+  codec: string;
+  region: string;
+  timeoutMs: number;
+}): Promise<Buffer> {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const payload = JSON.stringify({
+    Text: params.text,
+    SessionId: `openclaw-${Date.now()}`,
+    VoiceType: params.voiceType,
+    Speed: params.speed,
+    Volume: params.volume,
+    Codec: params.codec,
+    ModelType: 1,
+  });
+
+  const headers = buildTencentAuthorization({
+    secretId: params.secretId,
+    secretKey: params.secretKey,
+    service: "tts",
+    action: "TextToVoice",
+    payload,
+    timestamp,
+    region: params.region,
+  });
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), params.timeoutMs);
+
+  try {
+    const res = await fetch("https://tts.tencentcloudapi.com", {
+      method: "POST",
+      headers,
+      body: payload,
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`Tencent TTS API error (${res.status}): ${detail || res.statusText}`);
+    }
+
+    const data = (await res.json()) as {
+      Response?: {
+        Audio?: string;
+        Error?: { Code?: string; Message?: string };
+      };
+    };
+
+    if (data.Response?.Error) {
+      throw new Error(
+        `Tencent TTS error (${data.Response.Error.Code}): ${data.Response.Error.Message ?? ""}`,
+      );
+    }
+
+    if (!data.Response?.Audio) {
+      throw new Error("Tencent TTS returned no audio data");
+    }
+
+    return Buffer.from(data.Response.Audio, "base64");
+  } finally {
+    clearTimeout(timeout);
+  }
 }

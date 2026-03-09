@@ -28,6 +28,11 @@ import {
   resolveCloudflareAiGatewayBaseUrl,
 } from "./cloudflare-ai-gateway.js";
 import {
+  buildDashScopeModelDefinition,
+  DASHSCOPE_BASE_URL,
+  DASHSCOPE_MODEL_CATALOG,
+} from "./dashscope-models.js";
+import {
   buildDoubaoModelDefinition,
   DOUBAO_BASE_URL,
   DOUBAO_MODEL_CATALOG,
@@ -869,6 +874,14 @@ function buildSyntheticProvider(): ProviderConfig {
   };
 }
 
+function buildDashScopeProvider(): ProviderConfig {
+  return {
+    baseUrl: DASHSCOPE_BASE_URL,
+    api: "openai-completions",
+    models: DASHSCOPE_MODEL_CATALOG.map(buildDashScopeModelDefinition),
+  };
+}
+
 function buildDoubaoProvider(): ProviderConfig {
   return {
     baseUrl: DOUBAO_BASE_URL,
@@ -1159,6 +1172,11 @@ export async function resolveImplicitProviders(params: {
       ...buildQwenPortalProvider(),
       apiKey: QWEN_OAUTH_MARKER,
     };
+  }
+
+  const dashscopeKey = resolveProviderApiKey("dashscope").apiKey;
+  if (dashscopeKey) {
+    providers.dashscope = { ...buildDashScopeProvider(), apiKey: dashscopeKey };
   }
 
   const volcengineKey = resolveProviderApiKey("volcengine").apiKey;

@@ -1,6 +1,6 @@
 import type { SecretInput } from "./types.secrets.js";
 
-export type TtsProvider = "elevenlabs" | "openai" | "edge";
+export type TtsProvider = "elevenlabs" | "openai" | "edge" | "iflytek" | "tencent";
 
 export type TtsMode = "final" | "all";
 
@@ -75,6 +75,33 @@ export type TtsConfig = {
     saveSubtitles?: boolean;
     proxy?: string;
     timeoutMs?: number;
+  };
+  /** iFlytek (讯飞) TTS configuration. */
+  iflytek?: {
+    appId?: string;
+    apiKey?: SecretInput;
+    apiSecret?: SecretInput;
+    voice?: string;
+    /** Speech speed (0-100, default 50). */
+    speed?: number;
+    /** Speech volume (0-100, default 50). */
+    volume?: number;
+    /** Speech pitch (0-100, default 50). */
+    pitch?: number;
+  };
+  /** Tencent Cloud TTS configuration. */
+  tencent?: {
+    secretId?: SecretInput;
+    secretKey?: SecretInput;
+    /** Voice type. Default: "101001" (smart female). */
+    voiceType?: number;
+    /** Speech speed (-2 to 6, default 0). */
+    speed?: number;
+    /** Speech volume (0-10, default 0). */
+    volume?: number;
+    /** Codec: "mp3" or "pcm". Default: "mp3". */
+    codec?: string;
+    region?: string;
   };
   /** Optional path for local TTS user preferences JSON. */
   prefsPath?: string;

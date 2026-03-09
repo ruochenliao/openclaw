@@ -31,6 +31,7 @@ import {
   DEFAULT_OPENAI_BASE_URL,
   edgeTTS,
   elevenLabsTTS,
+  iflytekTTS,
   inferEdgeExtension,
   isValidOpenAIModel,
   isValidOpenAIVoice,
@@ -41,6 +42,7 @@ import {
   parseTtsDirectives,
   scheduleCleanup,
   summarizeText,
+  tencentTTS,
 } from "./tts-core.js";
 export { OPENAI_TTS_MODELS, OPENAI_TTS_VOICES } from "./tts-core.js";
 
@@ -130,6 +132,24 @@ export type ResolvedTtsConfig = {
     saveSubtitles: boolean;
     proxy?: string;
     timeoutMs?: number;
+  };
+  iflytek: {
+    appId?: string;
+    apiKey?: string;
+    apiSecret?: string;
+    voice: string;
+    speed: number;
+    volume: number;
+    pitch: number;
+  };
+  tencent: {
+    secretId?: string;
+    secretKey?: string;
+    voiceType: number;
+    speed: number;
+    volume: number;
+    codec: string;
+    region: string;
   };
   prefsPath?: string;
   maxTextLength: number;
@@ -317,6 +337,36 @@ export function resolveTtsConfig(cfg: OpenClawConfig): ResolvedTtsConfig {
       saveSubtitles: raw.edge?.saveSubtitles ?? false,
       proxy: raw.edge?.proxy?.trim() || undefined,
       timeoutMs: raw.edge?.timeoutMs,
+    },
+    iflytek: {
+      appId: raw.iflytek?.appId?.trim() || process.env.IFLYTEK_APP_ID?.trim() || undefined,
+      apiKey: normalizeResolvedSecretInputString({
+        value: raw.iflytek?.apiKey,
+        path: "messages.tts.iflytek.apiKey",
+      }) || process.env.IFLYTEK_API_KEY?.trim() || undefined,
+      apiSecret: normalizeResolvedSecretInputString({
+        value: raw.iflytek?.apiSecret,
+        path: "messages.tts.iflytek.apiSecret",
+      }) || process.env.IFLYTEK_API_SECRET?.trim() || undefined,
+      voice: raw.iflytek?.voice?.trim() || "xiaoyan",
+      speed: raw.iflytek?.speed ?? 50,
+      volume: raw.iflytek?.volume ?? 50,
+      pitch: raw.iflytek?.pitch ?? 50,
+    },
+    tencent: {
+      secretId: normalizeResolvedSecretInputString({
+        value: raw.tencent?.secretId,
+        path: "messages.tts.tencent.secretId",
+      }) || process.env.TENCENT_SECRET_ID?.trim() || undefined,
+      secretKey: normalizeResolvedSecretInputString({
+        value: raw.tencent?.secretKey,
+        path: "messages.tts.tencent.secretKey",
+      }) || process.env.TENCENT_SECRET_KEY?.trim() || undefined,
+      voiceType: raw.tencent?.voiceType ?? 101001,
+      speed: raw.tencent?.speed ?? 0,
+      volume: raw.tencent?.volume ?? 0,
+      codec: raw.tencent?.codec?.trim() || "mp3",
+      region: raw.tencent?.region?.trim() || "ap-guangzhou",
     },
     prefsPath: raw.prefsPath,
     maxTextLength: raw.maxTextLength ?? DEFAULT_MAX_TEXT_LENGTH,
@@ -523,10 +573,16 @@ export function resolveTtsApiKey(
   if (provider === "openai") {
     return config.openai.apiKey || process.env.OPENAI_API_KEY;
   }
+  if (provider === "iflytek") {
+    return config.iflytek.apiKey;
+  }
+  if (provider === "tencent") {
+    return config.tencent.secretId;
+  }
   return undefined;
 }
 
-export const TTS_PROVIDERS = ["openai", "elevenlabs", "edge"] as const;
+export const TTS_PROVIDERS = ["openai", "elevenlabs", "edge", "iflytek", "tencent"] as const;
 
 export function resolveTtsProviderOrder(primary: TtsProvider): TtsProvider[] {
   return [primary, ...TTS_PROVIDERS.filter((provider) => provider !== primary)];
@@ -681,6 +737,30 @@ export async function textToSpeech(params: {
           applyTextNormalization: normalizationOverride ?? config.elevenlabs.applyTextNormalization,
           languageCode: languageOverride ?? config.elevenlabs.languageCode,
           voiceSettings,
+          timeoutMs: config.timeoutMs,
+        });
+      } else if (provider === "iflytek") {
+        audioBuffer = await iflytekTTS({
+          text: params.text,
+          appId: config.iflytek.appId ?? "",
+          apiKey: config.iflytek.apiKey ?? "",
+          apiSecret: config.iflytek.apiSecret ?? "",
+          voice: config.iflytek.voice,
+          speed: config.iflytek.speed,
+          volume: config.iflytek.volume,
+          pitch: config.iflytek.pitch,
+          timeoutMs: config.timeoutMs,
+        });
+      } else if (provider === "tencent") {
+        audioBuffer = await tencentTTS({
+          text: params.text,
+          secretId: config.tencent.secretId ?? "",
+          secretKey: config.tencent.secretKey ?? "",
+          voiceType: config.tencent.voiceType,
+          speed: config.tencent.speed,
+          volume: config.tencent.volume,
+          codec: config.tencent.codec,
+          region: config.tencent.region,
           timeoutMs: config.timeoutMs,
         });
       } else {

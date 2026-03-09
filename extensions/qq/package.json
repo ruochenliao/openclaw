@@ -1,0 +1,34 @@
+{
+  "name": "@openclaw/qq",
+  "version": "0.1.0",
+  "description": "OpenClaw QQ channel plugin (via QQ Bot Platform API)",
+  "type": "module",
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "openclaw": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "qq",
+      "label": "QQ",
+      "selectionLabel": "QQ (QQ机器人)",
+      "docsPath": "/channels/qq",
+      "docsLabel": "qq",
+      "blurb": "QQ Bot Platform for group and guild messaging.",
+      "aliases": ["qqbot"],
+      "order": 39,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@openclaw/qq",
+      "localPath": "extensions/qq",
+      "defaultChoice": "local"
+    }
+  }
+}

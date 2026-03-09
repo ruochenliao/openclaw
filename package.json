@@ -212,6 +212,22 @@
       "types": "./dist/plugin-sdk/keyed-async-queue.d.ts",
       "default": "./dist/plugin-sdk/keyed-async-queue.js"
     },
+    "./plugin-sdk/wechat": {
+      "types": "./dist/plugin-sdk/wechat.d.ts",
+      "default": "./dist/plugin-sdk/wechat.js"
+    },
+    "./plugin-sdk/wecom": {
+      "types": "./dist/plugin-sdk/wecom.d.ts",
+      "default": "./dist/plugin-sdk/wecom.js"
+    },
+    "./plugin-sdk/dingtalk": {
+      "types": "./dist/plugin-sdk/dingtalk.d.ts",
+      "default": "./dist/plugin-sdk/dingtalk.js"
+    },
+    "./plugin-sdk/qq": {
+      "types": "./dist/plugin-sdk/qq.d.ts",
+      "default": "./dist/plugin-sdk/qq.js"
+    },
     "./cli-entry": "./openclaw.mjs"
   },
   "scripts": {

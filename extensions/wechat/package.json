@@ -1,0 +1,33 @@
+{
+  "name": "@openclaw/wechat",
+  "version": "0.1.0",
+  "description": "OpenClaw WeChat channel plugin (based on wechaty)",
+  "type": "module",
+  "dependencies": {
+    "wechaty": "^1.20.2"
+  },
+  "devDependencies": {
+    "openclaw": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "wechat",
+      "label": "WeChat",
+      "selectionLabel": "WeChat (微信)",
+      "docsPath": "/channels/wechat",
+      "docsLabel": "wechat",
+      "blurb": "WeChat personal messaging via wechaty framework.",
+      "aliases": ["weixin"],
+      "order": 36,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@openclaw/wechat",
+      "localPath": "extensions/wechat",
+      "defaultChoice": "local"
+    }
+  }
+}

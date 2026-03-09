@@ -19,18 +19,18 @@ let defaultWarnState: WarnState = { warned: false };
 type AnthropicAuthDefaultsMode = "api_key" | "oauth";
 
 const DEFAULT_MODEL_ALIASES: Readonly<Record<string, string>> = {
-  // Anthropic (pi-ai catalog uses "latest" ids without date suffix)
-  opus: "anthropic/claude-opus-4-6",
-  sonnet: "anthropic/claude-sonnet-4-6",
+  // DashScope / Qwen (China-optimized defaults)
+  opus: "dashscope/qwen-max-latest",
+  sonnet: "dashscope/qwen-plus-latest",
 
-  // OpenAI
-  gpt: "openai/gpt-5.4",
-  "gpt-mini": "openai/gpt-5-mini",
+  // OpenAI-compatible aliases -> Qwen
+  gpt: "dashscope/qwen-turbo-latest",
+  "gpt-mini": "dashscope/qwen-turbo-latest",
 
-  // Google Gemini (3.x are preview ids in the catalog)
-  gemini: "google/gemini-3.1-pro-preview",
-  "gemini-flash": "google/gemini-3-flash-preview",
-  "gemini-flash-lite": "google/gemini-3.1-flash-lite-preview",
+  // Gemini aliases -> Qwen
+  gemini: "dashscope/qwen-max-latest",
+  "gemini-flash": "dashscope/qwen-plus-latest",
+  "gemini-flash-lite": "dashscope/qwen-turbo-latest",
 };
 
 const DEFAULT_MODEL_COST: ModelDefinitionConfig["cost"] = {

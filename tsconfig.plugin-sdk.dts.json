@@ -55,6 +55,10 @@
     "src/plugin-sdk/voice-call.ts",
     "src/plugin-sdk/zalo.ts",
     "src/plugin-sdk/zalouser.ts",
+    "src/plugin-sdk/wechat.ts",
+    "src/plugin-sdk/wecom.ts",
+    "src/plugin-sdk/dingtalk.ts",
+    "src/plugin-sdk/qq.ts",
     "src/types/**/*.d.ts"
   ],
   "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
